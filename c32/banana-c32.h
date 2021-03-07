@@ -38,7 +38,7 @@ typedef unsigned int  uint;
 
 
 
-#define VERSION			"banana-c32 version v-302"
+#define VERSION			"banana-c32 version v-303"
 #define abs1(x)			((x)<0 ? -(x) : (x))
 
 
@@ -198,7 +198,7 @@ struct func_tbl{				// 関数情報を登録する為のテーブル
 	uchar param_numb;			// parameter 数
 };
 
-struct cv{
+struct cvs{
 	char buff[MAX_MALLOC_AREA];								// 24KB シンボル名格納用
 	char string_buf[MAX_STRING_LEN];						// 1KB  c32_token_process() で string を返す時に使用するバッファ
 	char tmp[MAX_STRING_LEN];								// 1KB  一時使用
@@ -219,18 +219,17 @@ struct src_ptr{					// パーサーロールバックの為のストラクチャー
 struct expr_param{
 	struct symtbl *func;		// 親関数のシンボルテーブル
 	struct symtbl *ptr;			// 変数のシンボルテーブル
-	char *off;					// 変数ラベル
-	char reg_ans[4];			// 結果を入れるべきレジスタ名
-	char reg_var[4];			// 変数/計算結果のレジスタ名
+	char *off;					// 変数ラベル（通常 $fp/$s7 相対の offset をセットされたラベル名）
+//	char reg_ans[4];			// ワークレジスタ名
+	char reg_var[4];			// 変数/計算結果が入っているレジスタ名
 	ushort attr;
 	ushort mode;
 	uint   value;
 	ushort xyz_size[MAX_ARRAY_DIM];
 	ushort xyz_dim;
-//	char reg[4];				// 結果を入れるべきレジスタ名
 };
 
-extern struct cv *cv;
+extern struct cvs *cv;
 extern char *c32_linebuf;
 extern char *c32_linebufp;
 extern char c32_symbuf[MAX_SYMBUF_LEN];
@@ -249,6 +248,7 @@ extern const char *c32_err_msg[];
 extern jmp_buf c32_env;
 extern int c32_max_src_buffer;				// src_buffer 使用量の記録
 extern int c32_max_output_buffer;			// output_buffer 使用量の記録
+extern int must_save_t_reg;				// bit0～bit9: t0～t9, bit12(0x1000): v0
 #ifdef __XC32
 extern SYS_FS_HANDLE c32_src_fp, c32_asm_fp;
 #else
@@ -327,6 +327,7 @@ const char *c32_err_msg[]={
 *	goto/continue/break/for/do/while/if/else/return/__test__/_asm/switch/case/default
 *	半角カタカナ表示/キー入力
 *	struct は入っていない
+*	浮動小数点は入っていない
 *	auto 変数の初期化は入っていない
 *	変数宣言で変数名をカンマで区切って宣言するのはポインタの場合は標準仕様から外れる
 *	多次元配列の初期化でも１重の大かっこでくくる事しか出来ない

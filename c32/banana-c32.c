@@ -44,12 +44,12 @@ struct numb_param{
 	int continue_numb;			// continue 文でのとび先ラベル番号
 	int switch_numb;			// switch 文の個別の番号
 	int serial_numb;			// case 文の通し番号
-	int s_switch;				// switch 文の式の値を入れた c32_s_numb
+	char reg_switch[4];			// switch 文の式の値を入れたレジスタ
 	int default_flag;			// ブロック内に default が有れば 1 になる
 };
 
 
-struct cv *cv = (struct cv *)RAM_BASE;
+struct cvs *cv = (struct cvs *)RAM_BASE;
 char *c32_linebuf;
 char *c32_linebufp;
 char c32_symbuf[MAX_SYMBUF_LEN];
@@ -68,6 +68,7 @@ const char *c32_err_msg[];
 jmp_buf c32_env;
 int c32_max_src_buffer;
 int c32_max_output_buffer;
+int must_save_t_reg;
 #ifdef __XC32
 SYS_FS_HANDLE c32_src_fp, c32_asm_fp;
 #else
@@ -212,7 +213,6 @@ static void parser_do(struct symtbl *func, struct numb_param *numb_param)
 	struct numb_param numb_param2;
 	struct expr_param expr_p1;
 	
-	expr_p1.func = func;
 	c32_token_process(0, &type);				// do を確認する
 	if(type != TYPE_DO)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
@@ -232,10 +232,12 @@ static void parser_do(struct symtbl *func, struct numb_param *numb_param)
 	
 	c32_printf("L%d\n", continue_numb);
 
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
-	convert_mode0(&expr_p1);
+	convert_mode0(&expr_p1, c32_s_numb);
 
 	c32_token_process(0, &type);				// ')' を確認する
 	if(type != TYPE_R_KAKKO)
@@ -243,7 +245,7 @@ static void parser_do(struct symtbl *func, struct numb_param *numb_param)
 	c32_token_process(0, &type);				// ';' を確認する
 	if(type != TYPE_SEMIKORON)
 		c32_error_message(E_SEMIKORON_MISSING, __LINE__, __FILE__);
-	c32_printf("	bnez	$t%d, L%d\n", c32_s_numb, top_numb);
+	c32_printf("	bnez	$%s, L%d\n", expr_p1.reg_var, top_numb);
 	c32_printf("L%d\n", break_numb);
 	c32_output_buffer_flush();
 }
@@ -262,7 +264,6 @@ static void parser_switch(struct symtbl *func, struct numb_param *numb_param)
 	struct expr_param expr_p1;
 	
 	c32_printf(";----------  parser switch  ----------\n");
-	expr_p1.func = func;
 	c32_token_process(0, &type);				// switch を確認する
 	if(type != TYPE_SWITCH)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
@@ -270,10 +271,12 @@ static void parser_switch(struct symtbl *func, struct numb_param *numb_param)
 	if(type != TYPE_L_KAKKO)
 		c32_error_message(E_L_KAKKO_MISSING, __LINE__, __FILE__);
 	
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
-	convert_mode0(&expr_p1);
+	convert_mode0(&expr_p1, c32_s_numb);
 	
 	c32_token_process(0, &type);				// ')' を確認する
 	if(type != TYPE_R_KAKKO)
@@ -285,7 +288,8 @@ static void parser_switch(struct symtbl *func, struct numb_param *numb_param)
 	numb_param2.break_numb = break_numb;
 	numb_param2.switch_numb = switch_numb;
 	numb_param2.serial_numb = 1;
-	numb_param2.s_switch = s_numb_save;
+//	numb_param2.s_switch = s_numb_save;
+	strcpy(numb_param2.reg_switch, expr_p1.reg_var);
 	numb_param2.default_flag = 0;
 	
 	c32_printf("	j		L%d@%d\n", switch_numb, numb_param2.serial_numb);	// 初期 serial_numb は 0 である
@@ -307,12 +311,13 @@ static void parser_case(struct symtbl *func, struct numb_param *numb_param)
 	int type;
 	struct expr_param expr_p1;
 	
-	expr_p1.func = func;
 	c32_token_process(0, &type);				// case を確認する
 	if(type != TYPE_CASE)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 	
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
 	
@@ -325,7 +330,7 @@ static void parser_case(struct symtbl *func, struct numb_param *numb_param)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 	c32_printf("L%d@%d				; case label\n", numb_param->switch_numb, (numb_param->serial_numb)++);
 	c32_printf("	li		$t0, %d\n", expr_p1.value);
-	c32_printf("	bne		$t%d, $t0, L%d@%d\n", numb_param->s_switch, numb_param->switch_numb, numb_param->serial_numb);
+	c32_printf("	bne		$%s, $t0, L%d@%d\n", numb_param->reg_switch, numb_param->switch_numb, numb_param->serial_numb);
 	c32_output_buffer_flush();
 }
 /********************************************************************************/
@@ -398,7 +403,6 @@ static void parser_for(struct symtbl *func, struct numb_param *numb_param)
 	struct expr_param expr_p1;
 	
 	c32_printf(";---------- parser_for ----------\n");
-	expr_p1.func = func;
 	numb_param2 = *numb_param;
 	numb_param2.break_numb = break_label;
 	numb_param2.continue_numb = continue_label;
@@ -428,11 +432,13 @@ static void parser_for(struct symtbl *func, struct numb_param *numb_param)
 		c32_src_ptr_restore(&src_ptr);
 		
 //		expr_compare(func, true_label, break_label);	// b の本体
-		sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+		memset(&expr_p1, 0, sizeof(expr_p1));
+		expr_p1.func = func;
+		must_save_t_reg = 0;
 		c32_expr(&expr_p1);
 		c32_output_buffer_flush();
-		convert_mode0(&expr_p1);
-		c32_printf("	beqz	$t%d, L%d\n", c32_s_numb, break_label);
+		convert_mode0(&expr_p1, c32_s_numb);
+		c32_printf("	beqz	$%s, L%d\n", expr_p1.reg_var, break_label);
 		c32_printf("	j		L%d\n", true_label);
 		
 		c32_token_process(0, &type);			// ';' 確認
@@ -445,10 +451,12 @@ static void parser_for(struct symtbl *func, struct numb_param *numb_param)
 	if(type != TYPE_R_KAKKO){
 		c32_src_ptr_restore(&src_ptr);
 		
-		sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+		memset(&expr_p1, 0, sizeof(expr_p1));
+		expr_p1.func = func;
+		must_save_t_reg = 0;
 		c32_expr(&expr_p1);						// c の本体
 		c32_output_buffer_flush();
-		convert_mode0(&expr_p1);
+		convert_mode0(&expr_p1, c32_s_numb);
 		
 		c32_token_process(0, &type);			// ')' 確認
 		if(type != TYPE_R_KAKKO)
@@ -477,7 +485,6 @@ static void parser_while(struct symtbl *func, struct numb_param *numb_param)
 	struct expr_param expr_p1;
 	
 	c32_printf(";---------- parser_while ----------\n");
-	expr_p1.func = func;
 	numb_param2 = *numb_param;
 	numb_param2.break_numb = break_label;
 	numb_param2.continue_numb = continue_label;
@@ -492,11 +499,13 @@ static void parser_while(struct symtbl *func, struct numb_param *numb_param)
 	
 	c32_printf("L%d\n", continue_label);
 //	expr_compare(func, true_label, break_label);
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	must_save_t_reg = 0;
+	expr_p1.func = func;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
-	convert_mode0(&expr_p1);
-	c32_printf("	beqz	$t%d, L%d\n", c32_s_numb, break_label);
+	convert_mode0(&expr_p1, c32_s_numb);
+	c32_printf("	beqz	$%s, L%d\n", expr_p1.reg_var, break_label);
 	
 	c32_token_process(0, &type);				// ')' を確認する
 	if(type != TYPE_R_KAKKO)
@@ -522,7 +531,6 @@ static void parser_if(struct symtbl *func, struct numb_param *numb_param)
 	struct expr_param expr_p1;
 	
 	c32_printf(";---------- parser_if ----------\n");
-	expr_p1.func = func;
 	c32_token_process(0, &type);				// if  を確認する
 	if(type != TYPE_IF)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
@@ -530,12 +538,14 @@ static void parser_if(struct symtbl *func, struct numb_param *numb_param)
 	if(type != TYPE_L_KAKKO)
 		c32_error_message(E_L_KAKKO_MISSING, __LINE__, __FILE__);
 	
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 //	expr_compare(func, true_label, false_label);
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
-	convert_mode0(&expr_p1);
-	c32_printf("	beqz	$t%d, L%d\n", c32_s_numb, false_label);
+	convert_mode0(&expr_p1, c32_s_numb);
+	c32_printf("	beqz	$%s, L%d\n", expr_p1.reg_var, false_label);
 
 	c32_token_process(0, &type);				// ')' を確認する
 	if(type != TYPE_R_KAKKO)
@@ -637,7 +647,6 @@ static void parser_dainyuu(struct symtbl *func)
 	struct expr_param expr_p1;
 	
 	c32_printf(";---------- parser_dainyuu ----------\n");
-	expr_p1.func = func;
 	c32_src_ptr_save(&src_ptr);					// 文の先頭を保存する
 	c32_token_process(0, &type);					// 先頭の symbol を取り込む
 	strcpy(buf, c32_symbuf);
@@ -654,7 +663,9 @@ static void parser_dainyuu(struct symtbl *func)
 next1:;
 	c32_src_ptr_restore(&src_ptr);				// 文の先頭に戻る
 	
-	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
 	
@@ -673,7 +684,6 @@ static void parser_return(struct symtbl *func)
 	struct expr_param expr_p1;
 	
 	c32_printf(";----------  parser_return  ---------\n");
-	expr_p1.func = func;
 	sprintf(buf, "t%d", c32_s_numb);
 	c32_token_process(0, &type);				// "return" を確認する
 	if(type != TYPE_RETURN)
@@ -687,11 +697,13 @@ static void parser_return(struct symtbl *func)
 	}
 	c32_src_ptr_restore(&src_ptr);
 	
-//	sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
-	strcpy(expr_p1.reg_ans, "v0");
+	memset(&expr_p1, 0, sizeof(expr_p1));
+	expr_p1.func = func;
+	must_save_t_reg = 0;
 	c32_expr(&expr_p1);
 	c32_output_buffer_flush();
-	convert_mode0(&expr_p1);
+	convert_mode0(&expr_p1, c32_s_numb);
+	c32_printf("	move	$v0, $%s\n", expr_p1.reg_var);
 
 	function_pop_reg(func);
 	c32_printf("	jr		$ra\n");
@@ -1030,7 +1042,8 @@ static void parser_function(struct symtbl *func)
 	numb_param2.continue_numb = -100;
 	numb_param2.switch_numb = -100;
 	numb_param2.serial_numb = -100;
-	numb_param2.s_switch = -100;
+//	numb_param2.s_switch = -100;
+	numb_param2.reg_switch[0] = 0;
 	numb_param2.default_flag = 0;
 	function_push_reg(func);
 	c32_output_buffer_flush();
@@ -1057,7 +1070,6 @@ static void parser_global_array_init(struct symtbl *var)
 	struct expr_param expr_p1;
 //	int label_start = c32_label_counter++;
 	
-	expr_p1.func = 0;
 	object_size = c32_attr_to_byte(var->attr);
 	//	サイズ０の配列のサイズを初期化データから求める
 	if(var->size==0){
@@ -1070,8 +1082,10 @@ static void parser_global_array_init(struct symtbl *var)
 			if(type != TYPE_L_NAMIKAKKO)		// '{' を確認する
 				c32_error_message(E_L_NAMIKAKKO_MISSING, __LINE__, __FILE__);
 			for(i=0; ; i++){
-				sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+				must_save_t_reg = 0;
 				
+				memset(&expr_p1, 0, sizeof(expr_p1));
+				expr_p1.func = 0;
 				no_printx_save = c32_no_printx;
 				c32_no_printx = 1;
 				c32_factor1(&expr_p1);				// ',' 演算子不使用
@@ -1116,7 +1130,9 @@ static void parser_global_array_init(struct symtbl *var)
 		//
 		//	初期値テーブルを var->work に作る
 		for(i=0; i<num; i++){
-			sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+			memset(&expr_p1, 0, sizeof(expr_p1));
+			expr_p1.func = 0;
+			must_save_t_reg = 0;
 			c32_factor1(&expr_p1);					// ',' 演算子不使用
 			c32_output_buffer_flush();			//AAAAA
 			if(expr_p1.mode==MODE2){			// 定数属性
@@ -1233,7 +1249,6 @@ static void parser_array(struct symtbl *var)
 	struct expr_param expr_p1;
 	struct src_ptr src_ptr;
 	
-	expr_p1.func = 0;
 	for(i=0; i<MAX_ARRAY_DIM; i++){				// max 7次元配列
 		c32_src_ptr_save(&src_ptr);
 		c32_token_process(0, &type);			// '[' の処理
@@ -1248,9 +1263,13 @@ static void parser_array(struct symtbl *var)
 			continue;
 		}
 		c32_src_ptr_restore(&src_ptr);
-		sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+		
+		memset(&expr_p1, 0, sizeof(expr_p1));
+		expr_p1.func = 0;
+		must_save_t_reg = 0;
 		c32_expr(&expr_p1);						// 添え字サイズを求める
 		c32_output_buffer_flush();
+		
 		if(expr_p1.mode != MODE2)			// 定数である事
 			c32_error_message(E_NEED_CONSTANT, __LINE__, __FILE__);
 		if(expr_p1.value==0)
@@ -1441,7 +1460,6 @@ static void parser_char_short_int(int attr)
 	struct src_ptr src_ptr;
 	struct expr_param expr_p1;
 	
-	expr_p1.func = 0;
 	for(;;){
 		ptr = c32_token_process(0, &type);			// global 変数/関数名を取り込む
 		if(type != TYPE_SYMBOL)
@@ -1492,9 +1510,13 @@ static void parser_char_short_int(int attr)
 		else if(type==TYPE_EQ){					// int sym=
 			if(attr & ATTR_VOID)
 				c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
-			sprintf(expr_p1.reg_ans, "t%d", c32_s_numb);
+			
+			memset(&expr_p1, 0, sizeof(expr_p1));
+			expr_p1.func = 0;
+			must_save_t_reg = 0;
 			c32_expr(&expr_p1);
 			c32_output_buffer_flush();
+			
 			ptr->init = expr_p1.value;
 			ptr->flag1 |= FLAG_08;				// 初期化されている変数である
 			c32_token_process(0, &type);			// ';' を確認する
@@ -1632,12 +1654,12 @@ int main(int argc, char *argv[])
 	char *ptr;
 	
 	printf("%s %s %s\n", VERSION, __DATE__, __TIME__);
-	cv = (struct cv *)malloc(sizeof(struct cv));
+	cv = (struct cvs *)malloc(sizeof(struct cvs));
 	if(cv==0){
 		printf("*** out of memory\n");
 		return 1;
 	}
-	memset(cv, 0, sizeof(struct cv));
+	memset(cv, 0, sizeof(struct cvs));
 	if(argc!=2 && argc!=3){
 		printf("*** error command line\n");
 		printf("$ compiler <src_file>\n");
@@ -1735,7 +1757,7 @@ int c32(const char *fname)
 		return 1;							// error: longjmp() が実行された
 	}
 	printf("%s %s %s\n", VERSION, __DATE__, __TIME__);
-	memset(cv, 0, sizeof(struct cv));
+	memset(cv, 0, sizeof(struct cvs));
 	c32_label_counter = 0;
 //	c32_output_buffer_line_numb = 0;
 	c32_tbl_ptr_g = 0;

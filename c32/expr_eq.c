@@ -27,8 +27,8 @@ int c32_expr_r_shift_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 		c32_printf("	srl		$t1, $t0, %d\n", expr_p2->value);
 	}
 	else{
-		convert_mode0(expr_p2);
-		c32_printf("	srlv	$t1, $t0, $%s\n", expr_p2->reg_ans);
+		convert_mode0(expr_p2, c32_s_numb);
+		c32_printf("	srlv	$t1, $t0, $%s\n", expr_p2->reg_var);
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
 	expr_p1->off = "0";
@@ -59,8 +59,8 @@ int c32_expr_l_shift_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 		c32_printf("	sll		$t1, $t0, %d\n", expr_p2->value);
 	}
 	else{
-		convert_mode0(expr_p2);
-		c32_printf("	sllv	$t1, $t0, $%s\n", expr_p2->reg_ans);
+		convert_mode0(expr_p2, c32_s_numb);
+		c32_printf("	sllv	$t1, $t0, $%s\n", expr_p2->reg_var);
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
 	expr_p1->off = "0";
@@ -91,8 +91,8 @@ int c32_expr_xor_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 		c32_printf("	xori	$t1, $t0, %d\n", expr_p2->value);
 	}
 	else{
-		convert_mode0(expr_p2);
-		c32_printf("	xor		$t1, $t0, $%s\n", expr_p2->reg_ans);
+		convert_mode0(expr_p2, c32_s_numb);
+		c32_printf("	xor		$t1, $t0, $%s\n", expr_p2->reg_var);
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
 
@@ -121,8 +121,8 @@ int c32_expr_or_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 		c32_printf("	ori		$t1, $t0, %d\n", expr_p2->value);
 	}
 	else{
-		convert_mode0(expr_p2);
-		c32_printf("	or		$t1, $t0, $%s\n", expr_p2->reg_ans);
+		convert_mode0(expr_p2, c32_s_numb);
+		c32_printf("	or		$t1, $t0, $%s\n", expr_p2->reg_var);
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
 
@@ -151,8 +151,8 @@ int c32_expr_and_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 		c32_printf("	andi	$t1, $t0, %d\n", expr_p2->value);
 	}
 	else{
-		convert_mode0(expr_p2);
-		c32_printf("	and		$t1, $t0, $%s\n", expr_p2->reg_ans);
+		convert_mode0(expr_p2, c32_s_numb);
+		c32_printf("	and		$t1, $t0, $%s\n", expr_p2->reg_var);
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
 
@@ -176,7 +176,7 @@ int c32_expr_percent_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 	if(expr_p2->attr & (ATTR_POINTER | ATTR_ARRAY))
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 
-	convert_mode0(expr_p2);
+	convert_mode0(expr_p2, c32_s_numb);
 	reg_eq_mem(expr_p1->attr, "t0", expr_p1->reg_var, expr_p1->off);		// $t0: ‘æˆê€
 	if((expr_p1->attr | expr_p2->attr) & ATTR_UNSIGNED){
 		c32_printf("	divu	$t0, $%s\n", expr_p2->reg_var);
@@ -208,7 +208,7 @@ int c32_expr_slush_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 	if(expr_p2->attr & (ATTR_POINTER | ATTR_ARRAY))
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 
-	convert_mode0(expr_p2);
+	convert_mode0(expr_p2, c32_s_numb);
 	reg_eq_mem(expr_p1->attr, "t0", expr_p1->reg_var, expr_p1->off);		// $t0: ‘æˆê€
 	if((expr_p1->attr | expr_p2->attr) & ATTR_UNSIGNED){
 		c32_printf("	divu	$t0, $%s\n", expr_p2->reg_var);
@@ -240,14 +240,14 @@ int c32_expr_asterisk_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 	if(expr_p2->attr & (ATTR_POINTER | ATTR_ARRAY))
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 
-	convert_mode0(expr_p2);
+	convert_mode0(expr_p2, c32_s_numb);
 	reg_eq_mem(expr_p1->attr, "t0", expr_p1->reg_var, expr_p1->off);		// $t0: ‘æˆê€
 	if((expr_p1->attr | expr_p2->attr) & ATTR_UNSIGNED){
-		c32_printf("	multu	$t0, $%s\n", expr_p2->reg_ans);
+		c32_printf("	multu	$t0, $%s\n", expr_p2->reg_var);
 		c32_printf("	mflo	$t1\n");
 	}
 	else{
-		c32_printf("	mult	$t0, $%s\n", expr_p2->reg_ans);
+		c32_printf("	mult	$t0, $%s\n", expr_p2->reg_var);
 		c32_printf("	mflo	$t1\n");
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
@@ -279,11 +279,11 @@ int c32_expr_minus_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 			c32_printf("	addiu	$t0, $t0, %d\n", 0-expr_p2->value * shift);
 		}
 		else{
-			convert_mode0(expr_p2);
+			convert_mode0(expr_p2, c32_s_numb);
 			if(shift){
-				c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_ans, expr_p2->reg_ans, shift);
+				c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_var, expr_p2->reg_var, shift);
 			}
-			c32_printf("	subu	$t0, $t0, $%s\n", expr_p2->reg_ans);
+			c32_printf("	subu	$t0, $t0, $%s\n", expr_p2->reg_var);
 		}
 	}
 	else{
@@ -292,8 +292,8 @@ int c32_expr_minus_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 			c32_printf("	addiu	$t0, $t0, %d\n", 0-expr_p2->value);
 		}
 		else{
-			convert_mode0(expr_p2);
-			c32_printf("	subu	$t0, $t0, $%s\n", expr_p2->reg_ans);
+			convert_mode0(expr_p2, c32_s_numb);
+			c32_printf("	subu	$t0, $t0, $%s\n", expr_p2->reg_var);
 		}
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t0");
@@ -325,11 +325,11 @@ int c32_expr_plus_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 			c32_printf("	addiu	$t0, $t0, %d\n", expr_p2->value * shift);
 		}
 		else{
-			convert_mode0(expr_p2);
+			convert_mode0(expr_p2, c32_s_numb);
 			if(shift){
-				c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_ans, expr_p2->reg_ans, shift);
+				c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_var, expr_p2->reg_var, shift);
 			}
-			c32_printf("	addu	$t0, $t0, $%s\n", expr_p2->reg_ans);
+			c32_printf("	addu	$t0, $t0, $%s\n", expr_p2->reg_var);
 		}
 	}
 	else{
@@ -338,8 +338,8 @@ int c32_expr_plus_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 			c32_printf("	addiu	$t0, $t0, %d\n", expr_p2->value);
 		}
 		else{
-			convert_mode0(expr_p2);
-			c32_printf("	addu	$t0, $t0, $%s\n", expr_p2->reg_ans);
+			convert_mode0(expr_p2, c32_s_numb);
+			c32_printf("	addu	$t0, $t0, $%s\n", expr_p2->reg_var);
 		}
 	}
 	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t0");
@@ -358,7 +358,7 @@ int c32_expr_plus_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 /********************************************************************************/
 int c32_expr_eq(struct expr_param *expr_p1, struct expr_param *expr_p2)
 {
-	convert_mode0(expr_p2);
-	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, expr_p2->reg_ans);
+	convert_mode0(expr_p2, c32_s_numb);
+	mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, expr_p2->reg_var);
 	return expr_p1->attr;
 }

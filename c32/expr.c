@@ -3,36 +3,99 @@
 #include "function.h"
 
 
+
 void c32_factor1(struct expr_param *expr_p1);
 
 
 /********************************************************************************/
-/*		c32_expr_function_push													*/
+/*		set_save_t_reg															*/
 /********************************************************************************/
-void c32_expr_function_push()
+void set_save_t_reg(char *reg)
 {
-	int i, size;
+	int n;
 	
-	size = 4*(c32_s_numb-2);
-	if(size <= 0)
-		return;
-	c32_printf("	addiu	$sp, $sp, %d\n", -size);
-	for(i=2; i<c32_s_numb; i++){
-		c32_printf("	sw		$t%d, %d($sp)\n", i, (i-2)*4);
+	if(strcmp(reg, "v0")==0)
+		must_save_t_reg |= 0x1000;
+	if(reg[0]=='t' && reg[2]==0){
+		n = reg[1] - '0';
+		if(n>=0 && n<10)
+			must_save_t_reg |= (1<<n);
 	}
 }
 
-void c32_expr_function_pop()
+void reset_save_t_reg(char *reg)
 {
-	int i, size;
+	int n;
 	
-	size = 4*(c32_s_numb-2);
-	if(size <= 0)
-		return;
-	for(i=2; i<c32_s_numb; i++){
-		c32_printf("	lw		$t%d, %d($sp)\n", i, (i-2)*4);
+	if(strcmp(reg, "v0")==0)
+		must_save_t_reg &= ~0x1000;
+	if(reg[0]=='t' && reg[2]==0){
+		n = reg[1] - '0';
+		if(n>=0 && n<10)
+			must_save_t_reg &= ~(1<<n);
 	}
-	c32_printf("	addiu	$sp, $sp, %d\n", size);
+}
+/********************************************************************************/
+/*		c32_expr_function_push													*/
+/********************************************************************************/
+void c32_expr_function_push(int save_t)
+{
+	int i, cnt;
+	
+	cnt = save_t & 0x1000 ? 1 : 0;			// save v0 ?
+	for(i=0; i<10; i++){
+		if (save_t & (1 << i))
+			cnt++;
+	}
+	if(cnt==0)
+		return;
+	c32_printf("	addiu	$sp, $sp, %d\n", -cnt*4);
+	cnt = 0;
+	if(save_t & 0x1000){
+		c32_printf("	sw		$v0, 0($sp)\n");
+		cnt++;
+	}
+	for(i=0; i<10; i++){
+		if(save_t & (1<<i)){
+			c32_printf("	sw	$t%d, %d($sp)\n", i, cnt*4);
+			cnt++;
+		}
+	}
+	
+//	size = 4*(c32_s_numb-2);
+//	if(size <= 0)
+//		return;
+//	c32_printf("	addiu	$sp, $sp, %d\n", -size);
+//	for(i=2; i<c32_s_numb; i++){
+//		c32_printf("	sw		$t%d, %d($sp)\n", i, (i-2)*4);
+//	}
+}
+
+void c32_expr_function_pop(int save_t)
+{
+	int i, cnt;
+	
+	cnt = 0;
+	if(save_t & 0x1000){
+		c32_printf("	lw		$v0, 0($sp)\n");
+		cnt++;
+	}
+	for(i=0; i<10; i++){
+		if(save_t & (1<<i)){
+			c32_printf("	lw		$t%d, %d($sp)\n", i, cnt*4);
+			cnt++;
+		}
+	}
+	if(cnt)
+		c32_printf("	addiu	$sp, $sp, %d\n", cnt*4);
+	
+//	size = 4*(c32_s_numb-2);
+//	if(size <= 0)
+//		return;
+//	for(i=2; i<c32_s_numb; i++){
+//		c32_printf("	lw		$t%d, %d($sp)\n", i, (i-2)*4);
+//	}
+//	c32_printf("	addiu	$sp, $sp, %d\n", size);
 }
 /********************************************************************************/
 /*		expr_function_call														*/
@@ -51,17 +114,17 @@ void c32_expr_function_pop()
 /********************************************************************************/
 static void expr_function_call(struct expr_param *expr_p1, struct symtbl *ptr)
 {
-	int i, type, param_numb;
-	char reg[4];
-//	struct expr_param expr_p2;
+	int i, type, param_numb, save_t;
+//	char reg[4];
+	struct symtbl *func = expr_p1->func;
 	
-//	s_numb_save = c32_s_numb;
-	strcpy(reg, expr_p1->reg_ans);
+//	strcpy(reg, expr_p1->reg_ans);
 	c32_token_process(0, &type);				// '(' を確認する
 	if(type != TYPE_L_KAKKO)
 		c32_error_message(E_L_KAKKO_MISSING, __LINE__, __FILE__);
 	
-	c32_expr_function_push();
+	save_t = must_save_t_reg;
+	c32_expr_function_push(save_t);
 	param_numb = ptr->func_tbl->param_numb;
 	if(param_numb)
 		c32_printf("	addiu	$sp, $sp, %d\n", -param_numb*4);
@@ -72,14 +135,17 @@ static void expr_function_call(struct expr_param *expr_p1, struct symtbl *ptr)
 	}
 	else{
 		for(i=0; i<param_numb; i++){
-			if(i<4)
-				sprintf(expr_p1->reg_ans, "a%d", i);
-			else
-				sprintf(expr_p1->reg_ans, "t%d", c32_s_numb);
+//			if(i<4)
+//				sprintf(expr_p1->reg_ans, "a%d", i);
+//			else
+//				sprintf(expr_p1->reg_ans, "t%d", c32_s_numb);
+			memset(expr_p1, 0, sizeof(struct expr_param));
+			expr_p1->func = func;
 			c32_factor1(expr_p1);				// c32_expr() では ',' 演算子処理が入ってしまう
 											// 関数の引数の計算
-			convert_mode0(expr_p1);
-			c32_printf("	sw		$%s, %d($sp)\n", expr_p1->reg_ans, i*4);
+			convert_mode0(expr_p1, c32_s_numb);
+			reset_save_t_reg(expr_p1->reg_var);
+			c32_printf("	sw		$%s, %d($sp)\n", expr_p1->reg_var, i*4);
 			c32_token_process(0, &type);			// ',' 又は ')'
 			if(type==TYPE_KANMA)
 				continue;
@@ -93,13 +159,21 @@ static void expr_function_call(struct expr_param *expr_p1, struct symtbl *ptr)
 //		for(i=0; i<(param_numb<4?param_numb:4); i++){
 //			c32_printf("	lw		$a%d, %d($sp)\n", i, i*4);
 //		}
-		strcpy(expr_p1->reg_ans, reg);
+//		strcpy(expr_p1->reg_ans, reg);
 	}
 	c32_printf("	jal		%s\n", ptr->symbuf);
-	c32_printf("	move	$%s, $v0\n", expr_p1->reg_ans);
+	if(save_t & 0x1000){					// $v0 使用中
+		sprintf(expr_p1->reg_var, "t%d", c32_s_numb);
+		set_save_t_reg(expr_p1->reg_var);
+		c32_printf("	move	$%s, $v0\n", expr_p1->reg_var);
+	}
+	else{									// $v0 未使用
+		strcpy(expr_p1->reg_var, "v0");
+		set_save_t_reg("v0");
+	}
 	if(param_numb)
 		c32_printf("	addiu	$sp, $sp, %d\n", param_numb*4);
-	c32_expr_function_pop();
+	c32_expr_function_pop(save_t);
 }
 
 static void expr_function_call_pass1(struct expr_param *expr_p1)
@@ -117,9 +191,11 @@ static void expr_function_call_pass1(struct expr_param *expr_p1)
 		c32_src_ptr_restore(&src_ptr);
 		expr_p2 = *expr_p1;
 		for(;;){
-			sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+			memset(&expr_p2, 0, sizeof(expr_p2));
+			expr_p2.func = expr_p1->func;
 			c32_factor1(&expr_p2);				// 関数の引数の計算
-			convert_mode0(&expr_p2);
+			convert_mode0(&expr_p2, c32_s_numb);
+			reset_save_t_reg(expr_p2.reg_var);
 			c32_token_process(0, &type);
 			if(type==TYPE_R_KAKKO)
 				break;
@@ -134,11 +210,12 @@ static void expr_function_call_pass1(struct expr_param *expr_p1)
 /********************************************************************************/
 static void expr_function_call_pointer(struct expr_param *expr_p1, struct symtbl *ptr)
 {
-	int i, type, param_numb;
+	int i, type, param_numb, save_t;
 	struct src_ptr src_ptr;
-	char reg[4];
+//	char reg[4];
+	struct symtbl *func = expr_p1->func;
 
-	strcpy(reg, expr_p1->reg_ans);
+//	strcpy(reg, expr_p1->reg_ans);
 	c32_token_process(0, &type);				// '(' を確認する
 	if(type != TYPE_L_KAKKO)
 		c32_error_message(E_L_KAKKO_MISSING, __LINE__, __FILE__);
@@ -150,8 +227,11 @@ static void expr_function_call_pointer(struct expr_param *expr_p1, struct symtbl
 	else{
 		c32_src_ptr_restore(&src_ptr);
 		for(i=0; ; i++){
-			sprintf(expr_p1->reg_ans, "t%d", c32_s_numb);
+			memset(expr_p1, 0, sizeof(struct expr_param));
+			expr_p1->func = func;
 			c32_factor1(expr_p1);
+			convert_mode0(expr_p1, c32_s_numb);
+			reset_save_t_reg(expr_p1->reg_var);
 			c32_token_process(0, &type);
 			if(type==TYPE_KANMA)
 				continue;
@@ -164,7 +244,8 @@ static void expr_function_call_pointer(struct expr_param *expr_p1, struct symtbl
 	}
 	
 	c32_src_ptr_restore(&src_ptr);
-	c32_expr_function_push();
+	save_t = must_save_t_reg;
+	c32_expr_function_push(save_t);
 	if(param_numb)
 		c32_printf("	addiu	$sp, $sp, %d\n", -(param_numb*4>16?param_numb*4:16));
 	
@@ -175,13 +256,16 @@ static void expr_function_call_pointer(struct expr_param *expr_p1, struct symtbl
 	}
 	else{
 		for(i=0; i<param_numb; i++){
-			if(i<4)
-				sprintf(expr_p1->reg_ans, "a%d", i);
-			else
-				sprintf(expr_p1->reg_ans, "t%d", c32_s_numb);
+//			if(i<4)
+//				sprintf(expr_p1->reg_ans, "a%d", i);
+//			else
+//				sprintf(expr_p1->reg_ans, "t%d", c32_s_numb);
+			memset(expr_p1, 0, sizeof(struct expr_param));
+			expr_p1->func = func;
 			c32_factor1(expr_p1);		// c32_expr() では ',' 演算子処理が入ってしまう
-			convert_mode0(expr_p1);
-			c32_printf("	sw		$%s, %d($sp)\n", expr_p1->reg_ans, i*4);
+			convert_mode0(expr_p1, c32_s_numb);
+			reset_save_t_reg(expr_p1->reg_var);
+			c32_printf("	sw		$%s, %d($sp)\n", expr_p1->reg_var, i*4);
 			c32_token_process(0, &type);			// ',' 又は ')'
 			if(type==TYPE_KANMA)
 				continue;
@@ -201,13 +285,22 @@ static void expr_function_call_pointer(struct expr_param *expr_p1, struct symtbl
 	else if(ptr->flag1 & (FLAG_04 | FLAG_08)){	// global 変数
 		c32_printf("	lw		$t1, %s($s7)\n", ptr->label);
 	}
-	strcpy(expr_p1->reg_ans, reg);
+//	strcpy(expr_p1->reg_ans, reg);
 	c32_printf("	lw		$t1, 0($t1)\n");
 	c32_printf("	jalr	$ra, $t1\n");
-	c32_printf("	move	$%s, $v0\n", expr_p1->reg_ans);
+	
+	if(save_t & 0x1000){					// $v0 使用中
+		sprintf(expr_p1->reg_var, "t%d", c32_s_numb);
+		set_save_t_reg(expr_p1->reg_var);
+		c32_printf("	move	$%s, $v0\n", expr_p1->reg_var);
+	}
+	else{									// $v0 未使用
+		strcpy(expr_p1->reg_var, "v0");
+		set_save_t_reg("v0");
+	}
 	if(param_numb)
 		c32_printf("	addiu	$sp, $sp, %d\n", param_numb*4>16?param_numb*4:16);
-	c32_expr_function_pop();
+	c32_expr_function_pop(save_t);
 }
 /********************************************************************************/
 /*		factor																	*/
@@ -229,14 +322,11 @@ static void factor(struct expr_param *expr_p1)
 	int i, type;
 	struct symtbl *ptr;
 	struct src_ptr src_ptr;
+	struct symtbl *func = expr_p1->func;
 	
 //	c32_printf(";---------- factor ----------\n");
-	expr_p1->ptr = 0;
-	expr_p1->attr = 0;
-	expr_p1->mode = 0;
-	expr_p1->value = 0;
-	memset(expr_p1->xyz_size, 0, sizeof(expr_p1->xyz_size));
-	expr_p1->xyz_dim = 0;
+	memset(expr_p1, 0, sizeof(struct expr_param));
+	expr_p1->func = func;
 
 	ptr = c32_token_process(expr_p1->func, &type);
 	if(type==TYPE_DIGIT){					// 定数 ====================
@@ -305,7 +395,9 @@ static void factor(struct expr_param *expr_p1)
 			memcpy(expr_p1->xyz_size, ptr->xyz_size, sizeof(expr_p1->xyz_size));
 			expr_p1->off = ptr->label;
 			if(ptr->flag1 & FLAG_04){		// global
-				c32_printf("	la		$%s, %s\n", expr_p1->reg_ans, expr_p1->off);
+				sprintf(expr_p1->reg_var, "t%d", c32_s_numb);
+				set_save_t_reg(expr_p1->reg_var);
+				c32_printf("	la		$%s, %s\n", expr_p1->reg_var, expr_p1->off);
 				expr_p1->mode = MODE0;		// 計算式属性
 			}
 			else{							// auto/param
@@ -328,21 +420,13 @@ static void factor(struct expr_param *expr_p1)
 				expr_p1->attr = ptr->attr;
 				return;
 			}
-//			expr_p1->value = ptr->value;
 			if(ptr->flag1 & FLAG_04){		// global
 				strcpy(expr_p1->reg_var, "s7");
 				expr_p1->mode = MODE1;		// $s7 レジスタ相対
 			}
 			else{							// auto/param
-//				if(ptr->reg[0]){
-//					expr_p1->value = 0;
-//					strcpy(expr_p1->reg_var, ptr->reg);
-//					expr_p1->mode = MODE0;	// レジスタ
-//				}
-//				else{
-					strcpy(expr_p1->reg_var, "fp");
-					expr_p1->mode = MODE1;	// $fp レジスタ相対
-//				}
+				strcpy(expr_p1->reg_var, "fp");
+				expr_p1->mode = MODE1;		// $fp レジスタ相対
 			}
 			expr_p1->off = ptr->label;
 			expr_p1->attr = ptr->attr;
@@ -374,13 +458,12 @@ static void factor15(struct expr_param *expr_p1)
 }
 /********************************************************************************/
 /*		factor_array_param														*/
-/*		[][][] 計算: 最初の [] の処理は終わっている→c32_s_numb					*/
-/*		配列名: expr_p1,s_numb_save,  第一引数: c32_s_numb→s_numb_save			*/
-/*		配列アドレス：s_numb_save, offset:										*/
+/*		[][][] 計算: 最初の [] の処理は終わっている→expr_p2					*/
+/*		配列名: expr_p1, 第一引数: expr_p2,  offset を expr_p2 に入れる			*/
 /********************************************************************************/
-static void factor_array_param(struct expr_param *expr_p1)
+static void factor_array_param(struct expr_param *expr_p1, struct expr_param *expr_p2)
 {
-	struct expr_param expr_p2;
+	struct expr_param expr_p3;
 	struct src_ptr src_ptr;
 	int i, type, dim, s_numb_save;
 	
@@ -395,9 +478,9 @@ static void factor_array_param(struct expr_param *expr_p1)
 		if(expr_p1->xyz_dim >= 2)
 			c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 		if(expr_p1->xyz_dim==1){
-			c32_printf("	li		$t0, %d\n", expr_p1->xyz_size[dim-1]);
-			c32_printf("	multu	$t%d, $t0\n", c32_s_numb);
-			c32_printf("	mflo	$t%d\n", c32_s_numb);
+			c32_printf("	li		$t0, %d\n",  expr_p1->xyz_size[dim-1]);
+			c32_printf("	multu	$%s, $t0\n", expr_p2->reg_var);
+			c32_printf("	mflo	$%s\n",      expr_p2->reg_var);
 		}
 		return;
 	}
@@ -417,15 +500,17 @@ static void factor_array_param(struct expr_param *expr_p1)
 		//	dim=3: xyz_size[i] を s_numb_save に掛けてから c32_expr() を加算する
 		//  dim=2: xyz_size[i] を s_numb_save に掛けてから c32_expr() を加算する
 		//  dim=1: ここには来ない
-		c32_printf("	li		$t0, %d\n", expr_p1->xyz_size[i]);
-		c32_printf("	multu	$t%d, $t0\n", s_numb_save);
-		c32_printf("	mflo	$t%d\n", s_numb_save);
+		c32_printf("	li		$t0, %d\n",  expr_p1->xyz_size[i]);
+		c32_printf("	multu	$%s, $t0\n", expr_p2->reg_var);
+		c32_printf("	mflo	$%s\n",      expr_p2->reg_var);
 		
-		expr_p2 = *expr_p1;
-		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
-		c32_expr(&expr_p2);							// 引数を求める
-		convert_mode0(&expr_p2);
-		c32_printf("	addu	$t%d, $t%d, $t%d\n", s_numb_save, s_numb_save, c32_s_numb);
+		memset(&expr_p3, 0, sizeof(expr_p3));
+		expr_p3.func = expr_p1->func;
+		c32_expr(&expr_p3);							// 引数を求める
+		convert_mode0(&expr_p3, c32_s_numb);
+		reset_save_t_reg(expr_p3.reg_var);
+		
+		c32_printf("	addu	$%s, $%s, $%s\n", expr_p2->reg_var, expr_p2->reg_var, expr_p3.reg_var);
 		
 		c32_token_process(0, &type);			// ']' を確認する
 		if(type != TYPE_R_KAKUKAKKO)
@@ -435,9 +520,9 @@ static void factor_array_param(struct expr_param *expr_p1)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 	//	dim==1 なら xyz_size[i] を掛ける
 	if(expr_p1->xyz_dim==1){
-		c32_printf("	li		$t0, %d\n", expr_p1->xyz_size[dim-1]);
-		c32_printf("	multu	$t%d, $t0\n", s_numb_save);
-		c32_printf("	mflo	$t%d\n", s_numb_save);
+		c32_printf("	li		$t0, %d\n",  expr_p1->xyz_size[dim-1]);
+		c32_printf("	multu	$%s, $t0\n", expr_p2->reg_var);
+		c32_printf("	mflo	$%s\n",      expr_p2->reg_var);
 	}
 	
 	c32_s_numb = s_numb_save;
@@ -448,17 +533,18 @@ static void factor_array_param(struct expr_param *expr_p1)
 /*		expr_p1 と s_numb_save : 配列開始アドレス								*/
 /*		c32_s_numb             : offset											*/
 /********************************************************************************/
-static void factor_array_element(struct expr_param *expr_p1, int s_numb_save, int c32_s_numb)
+static void factor_array_element(struct expr_param *expr_p1, struct expr_param *expr_p2, int s_numb_save)
 {
+	char buf[4];
 	
 	switch(c32_attr_to_byte(expr_p1->attr)){
 	case 1:
 		break;
 	case 2:
-		c32_printf("	sll		$t%d, $t%d, 1\n", c32_s_numb, c32_s_numb);
+		c32_printf("	sll		$%s, $%s, 1\n", expr_p2->reg_var, expr_p2->reg_var);
 		break;
 	case 4:
-		c32_printf("	sll		$t%d, $t%d, 2\n", c32_s_numb, c32_s_numb);
+		c32_printf("	sll		$%s, $%s, 2\n", expr_p2->reg_var, expr_p2->reg_var);
 		break;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
@@ -467,54 +553,59 @@ static void factor_array_element(struct expr_param *expr_p1, int s_numb_save, in
 	switch(expr_p1->mode){
 	case MODE0:							// レジスタ属性    c32_s_numb
 		if(expr_p1->attr & ATTR_ARRAY_P){		// 配列へのポインタならば（通常は関数引数）
-			c32_printf("	lw		$%s, 0($%s)\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			c32_printf("	lw		$%s, 0($%s)\n", expr_p1->reg_var, expr_p1->reg_var);
 		}
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		c32_printf("	addu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2->reg_var);
 		expr_p1->off = "0";
 		expr_p1->mode = MODE1;					// アドレス相対
 		break;
 	case MODE1:								// レジスタ相対  c32_s_numb
-		c32_printf("	addiu	$%s, $%s, %s\n", expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+		sprintf(buf, "t%d", s_numb_save);
+		c32_printf("	addiu	$%s, $%s, %s\n", buf, expr_p1->reg_var, expr_p1->off);
 		if(expr_p1->attr & ATTR_ARRAY_P){		// 配列へのポインタならば（通常は関数引数）
-			c32_printf("	lw		$%s, 0($%s)\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			c32_printf("	lw		$%s, 0($%s)\n", buf, buf);
 		}
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		c32_printf("	addu	$%s, $%s, $%s\n", buf, buf, expr_p2->reg_var);
+		strcpy(expr_p1->reg_var, buf);
 		expr_p1->off = "0";
 		expr_p1->mode = MODE1;					// 計算式アドレス属性
 		break;
 	case MODE2:							// 定数属性    
-		c32_printf("	la		$%s, %d\n", expr_p1->reg_ans, expr_p1->value);
+		sprintf(buf, "t%d", s_numb_save);
+		c32_printf("	la		$%s, %d\n", buf, expr_p1->value);
 next_mode2:;
 		if(expr_p1->attr & ATTR_ARRAY_P){		// 配列へのポインタならば（通常は関数引数）
-			c32_printf("	lw		$%s, 0($%s)\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			c32_printf("	lw		$%s, 0($%s)\n", buf, buf);
 		}
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		c32_printf("	addu	$%s, $%s, $%s\n", buf, buf, expr_p2->reg_var);
+		strcpy(expr_p1->reg_var, buf);
 		expr_p1->off = "0";
 		expr_p1->mode = MODE1;					// 計算式アドレス属性
 		break;
 	case MODE6:									// ラベル
-		c32_printf("	la		$%s, L%d\n", expr_p1->reg_ans, expr_p1->value);
+		sprintf(buf, "t%d", s_numb_save);
+		c32_printf("	la		$%s, L%d\n", buf, expr_p1->value);
 		goto next_mode2;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 	}
+	set_save_t_reg(expr_p1->reg_var);
 }
 /********************************************************************************/
 /*		factor_pointer_element													*/
 /********************************************************************************/
-static void factor_pointer_element(struct expr_param *expr_p1, int s_numb_save, int c32_s_numb)
+static void factor_pointer_element(struct expr_param *expr_p1, struct expr_param *expr_p2, int s_numb_save)
 {
+	char buf[4];
+	
 	switch(c32_attr_to_byte(expr_p1->attr)){
 	case 1:
 		break;
 	case 2:
-		c32_printf("	sll		$t%d, $t%d, %d\n", c32_s_numb, c32_s_numb, 1);
+		c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_var, expr_p2->reg_var, 1);
 		break;
 	case 4:
-		c32_printf("	sll		$t%d, $t%d, %d\n", c32_s_numb, c32_s_numb, 2);
+		c32_printf("	sll		$%s, $%s, %d\n", expr_p2->reg_var, expr_p2->reg_var, 2);
 		break;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
@@ -522,30 +613,32 @@ static void factor_pointer_element(struct expr_param *expr_p1, int s_numb_save, 
 	
 	switch(expr_p1->mode){
 	case MODE0:							// レジスタ属性    c32_s_numb
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		c32_printf("	addu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2->reg_var);
 		expr_p1->off = "0";
 		break;
 	case MODE1:							// レジスタ相対  c32_s_numb
-		reg_eq_mem(ATTR_INT, expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		sprintf(buf, "t%d", s_numb_save);
+		reg_eq_mem(ATTR_INT, buf, expr_p1->reg_var, expr_p1->off);
+		c32_printf("	addu	$%s, $%s, $%s\n", buf, buf, expr_p2->reg_var);
+		strcpy(expr_p1->reg_var, buf);
 		expr_p1->off = "0";
 		break;
 	case MODE2:							// 定数属性
-		c32_printf("	la		$%s, %d\n", expr_p1->reg_ans, expr_p1->value);
+		sprintf(buf, "t%d", s_numb_save);
+		c32_printf("	la		$%s, %d\n", buf, expr_p1->value);
 next_mode2:;
-		c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-		strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		c32_printf("	addu	$%s, $%s, $%s\n", buf, buf, expr_p2->reg_var);
+		strcpy(expr_p1->reg_var, buf);
 		expr_p1->off = "0";
 		break;
 	case MODE6:							// ラベル
-		c32_printf("	la		$%s, L%d\n", expr_p1->reg_ans, expr_p1->value);
+		sprintf(buf, "t%d", s_numb_save);
+		c32_printf("	la		$%s, L%d\n", buf, expr_p1->value);
 		goto next_mode2;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 	}
-
+	set_save_t_reg(expr_p1->reg_var);
 	expr_p1->mode = MODE1;					// 計算式アドレス属性
 }
 /********************************************************************************/
@@ -573,9 +666,10 @@ static void factor14(struct expr_param *expr_p1)
 	struct expr_param expr_p2;
 	
 	s_numb_save = c32_s_numb;
-	factor15(expr_p1);
-	c32_src_ptr_save(&src_ptr);
 
+	factor15(expr_p1);
+
+	c32_src_ptr_save(&src_ptr);
 	c32_token_process(0, &type);				// '[' をテストする
 	if(type != TYPE_L_KAKUKAKKO){
 		c32_src_ptr_restore(&src_ptr);
@@ -586,11 +680,14 @@ static void factor14(struct expr_param *expr_p1)
 	if(c32_s_numb > c32_max_s_numb)
 		c32_max_s_numb = c32_s_numb;
 	
-	expr_p2 = *expr_p1;
-	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//	expr_p2 = *expr_p1;
+//	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p2, 0, sizeof(expr_p2));
+	expr_p2.func = expr_p1->func;
+
 	c32_expr(&expr_p2);							// 配列の第一引数
-	convert_mode0(&expr_p2);
-	
+
+	convert_mode0(&expr_p2, c32_s_numb);
 	c32_token_process(0, &type);				// ']' を確認する
 	if(type != TYPE_R_KAKUKAKKO)
 		c32_error_message(E_R_KAKUKAKKO_MISSING, __LINE__, __FILE__);
@@ -599,18 +696,20 @@ static void factor14(struct expr_param *expr_p1)
 		c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 	
 	if(expr_p1->attr & ATTR_ARRAY){
-		factor_array_param(expr_p1);		// 配列名: expr_p1,s_numb_save,  offset を c32_s_numb に入れる
-		factor_array_element(expr_p1, s_numb_save, c32_s_numb);
+		factor_array_param(expr_p1, &expr_p2);		// 配列名: expr_p1, 第一引数: expr_p2,  offset を expr_p2 に入れる
+		factor_array_element(expr_p1, &expr_p2, s_numb_save);
 	}
 	else if(expr_p1->attr & ATTR_POINTER){
 		expr_p1->attr -= ATTR_POINTER1;
-		factor_pointer_element(expr_p1, s_numb_save, c32_s_numb);
+		factor_pointer_element(expr_p1, &expr_p2, s_numb_save);
 	}
 	else{
 		c32_error_message(E_NEED_POINTER, __LINE__, __FILE__);
 	}
 	
 	c32_s_numb = s_numb_save;
+//	reset_save_t_reg(expr_p1->reg_var);
+	reset_save_t_reg(expr_p2.reg_var);
 }
 /********************************************************************************/
 /*		factor13																*/
@@ -637,6 +736,7 @@ static void factor13(struct expr_param *expr_p1)
 	struct symtbl *ptr;
 	int top_numb = c32_label_counter++;
 	int end_numb = c32_label_counter++;
+	char buf[4];
 	
 	c32_src_ptr_save(&src_ptr);
 	c32_token_process(0, &type);
@@ -651,8 +751,11 @@ static void factor13(struct expr_param *expr_p1)
 			c32_token_process(0, &type);			// ')' を確認する
 			if (type != TYPE_R_KAKKO)
 				c32_error_message(E_R_KAKKO_MISSING, __LINE__, __FILE__);
+
 			factor13(expr_p1);
-			convert_mode0(expr_p1);
+			convert_mode0(expr_p1, c32_s_numb);
+//			reset_save_t_reg(expr_p1->reg_var);
+
 			expr_p1->mode = MODE0;
 			expr_p1->attr = attr2;
 			return;
@@ -662,36 +765,40 @@ static void factor13(struct expr_param *expr_p1)
 		factor13(expr_p1);
 		
 		if(expr_p1->attr & ATTR_ARRAY)
-			expr_p1->attr &= ~ATTR_ARRAY;
+			expr_p1->attr -= ATTR_ARRAY1;
 		else if(expr_p1->attr & ATTR_POINTER)
 			expr_p1->attr -= ATTR_POINTER1;
 		else
 			c32_error_message(E_NEED_POINTER, __LINE__, __FILE__);
 
 		switch(expr_p1->mode){
-		case MODE0:							// レジスタ属性    c32_s_numb
-			strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+		case MODE0:							// 計算式属性    c32_s_numb
+//			strcpy(expr_p1->reg_var, expr_p1->reg_ans);
 			expr_p1->off = "0";
 			break;
 		case MODE1:							// 計算式アドレス属性  c32_s_numb
-			c32_printf("	lw		$%s, %s($%s)\n", expr_p1->reg_ans, expr_p1->off, expr_p1->reg_var);
-			strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+			sprintf(buf, "t%d", c32_s_numb);	// AAAAA 以下４行を削除できそうにも思うが良く分からない
+			c32_printf("	lw		$%s, %s($%s)\n", buf, expr_p1->off, expr_p1->reg_var);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->off = "0";
 			break;
 		case MODE2:							// 定数属性
-			c32_printf("	la		$%s, %d\n", expr_p1->reg_ans, expr_p1->value);
-			strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+			sprintf(buf, "t%d", c32_s_numb);
+			c32_printf("	la		$%s, %d\n", buf, expr_p1->value);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->off = "0";
 			break;
 		case MODE6:							// ラベル
-			c32_printf("	la		$%s, L%d\n", expr_p1->reg_ans, expr_p1->value);
-			strcpy(expr_p1->reg_var, expr_p1->reg_ans);
+			sprintf(buf, "t%d", c32_s_numb);
+			c32_printf("	la		$%s, L%d\n", buf, expr_p1->value);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->off = "0";
 			break;
 		default:
 			c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 		}
 		expr_p1->mode = MODE1;					// 計算式アドレス属性
+		set_save_t_reg(expr_p1->reg_var);
 		return;
 	}
 	else if(type==TYPE_AND){				// '&'
@@ -706,8 +813,11 @@ static void factor13(struct expr_param *expr_p1)
 			if(expr_p1->ptr){
 				expr_p1->ptr->flag1 |= FLAG_20;	// & 演算子使用
 			}
-			c32_printf("	addiu	$%s, $%s, %s\n", expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+			sprintf(buf, "t%d", c32_s_numb);	// AAAAA 以下４行は削除できるかもしれない
+			c32_printf("	addiu	$%s, $%s, %s\n", buf, expr_p1->reg_var, expr_p1->off);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->mode = MODE0;			// 計算式属性
+			set_save_t_reg(expr_p1->reg_var);
 			return;
 		case MODE2:							// 定数属性
 		case MODE6:							// ラベル
@@ -779,13 +889,16 @@ static void factor13(struct expr_param *expr_p1)
 	else if(type==TYPE_MINUS){				// '-'
 		factor13(expr_p1);
 		switch(expr_p1->mode){
-		case MODE0:							// レジスタ属性
-			c32_printf("	subu	$%s, $zero, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+		case MODE0:							// 計算式属性
+			c32_printf("	subu	$%s, $zero, $%s\n", expr_p1->reg_var, expr_p1->reg_var);
 			break;
-		case MODE1:							// レジスタ相対
-			reg_eq_mem(expr_p1->attr, expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
-			c32_printf("	subu	$%s, $zero, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+		case MODE1:							// 計算式アドレス属性
+			sprintf(buf, "t%d", c32_s_numb);
+			reg_eq_mem(expr_p1->attr, buf, expr_p1->reg_var, expr_p1->off);
+			c32_printf("	subu	$%s, $zero, $%s\n", buf, buf);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->mode = MODE0;
+			set_save_t_reg(expr_p1->reg_var);
 			break;
 		case MODE2:							// 定数
 			expr_p1->value = 0-(expr_p1->value);
@@ -801,12 +914,15 @@ static void factor13(struct expr_param *expr_p1)
 		factor13(expr_p1);
 		switch(expr_p1->mode){
 		case MODE0:							// レジスタ属性
-			c32_printf("	nor		$%s, $%s, $zero\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			c32_printf("	nor		$%s, $%s, $zero\n", expr_p1->reg_var, expr_p1->reg_var);
 			break;
 		case MODE1:							// レジスタ相対
-			reg_eq_mem(expr_p1->attr, expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
-			c32_printf("	nor		$%s, $%s, $zero\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			sprintf(buf, "t%d", c32_s_numb);
+			reg_eq_mem(expr_p1->attr, buf, expr_p1->reg_var, expr_p1->off);
+			c32_printf("	nor		$%s, $%s, $zero\n", buf, buf);
+			strcpy(expr_p1->reg_var, buf);
 			expr_p1->mode = MODE0;
+			set_save_t_reg(expr_p1->reg_var);
 			break;
 		case MODE2:							// 定数
 			expr_p1->value = ~(expr_p1->value);
@@ -820,12 +936,12 @@ static void factor13(struct expr_param *expr_p1)
 	}
 	else if(type==TYPE_NOT){				// '!'
 		factor13(expr_p1);
-		convert_mode0(expr_p1);
-		c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_ans, top_numb);
-		c32_printf("	li		$%s, 0\n", expr_p1->reg_ans);
+		convert_mode0(expr_p1, c32_s_numb);
+		c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_var, top_numb);
+		c32_printf("	li		$%s, 0\n", expr_p1->reg_var);
 		c32_printf("	j		L%d\n", end_numb);
 		c32_printf("L%d\n", top_numb);
-		c32_printf("	li		$%s, 1\n", expr_p1->reg_ans);
+		c32_printf("	li		$%s, 1\n", expr_p1->reg_var);
 		c32_printf("L%d\n", end_numb);
 		expr_p1->mode = MODE0;				// 計算式属性
 		expr_p1->attr = ATTR_INT;
@@ -894,10 +1010,13 @@ static void factor13(struct expr_param *expr_p1)
 		
 		switch(expr_p1->mode){
 		case MODE1:							// レジスタ相対
+			sprintf(buf, "t%d", c32_s_numb);
 			reg_eq_mem(expr_p1->attr, "t0", expr_p1->reg_var, expr_p1->off);
 			c32_printf("	addiu	$t1, $t0, %d\n", tmp);
 			mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
-			c32_printf("	move	$%s, $t0\n", expr_p1->reg_ans);
+			c32_printf("	move	$%s, $t0\n", buf);
+			strcpy(expr_p1->reg_var, buf);
+			set_save_t_reg(expr_p1->reg_var);
 			expr_p1->mode = MODE0;			// レジスタ属性
 			return;
 		case MODE2:							// 定数属性    value
@@ -921,10 +1040,13 @@ static void factor13(struct expr_param *expr_p1)
 		
 		switch(expr_p1->mode){
 		case MODE1:							// レジスタ相対
+			sprintf(buf, "t%d", c32_s_numb);
 			reg_eq_mem(expr_p1->attr, "t0", expr_p1->reg_var, expr_p1->off);
 			c32_printf("	addiu	$t1, $t0, %d\n", -tmp);
 			mem_eq_reg(expr_p1->attr, expr_p1->reg_var, expr_p1->off, "t1");
-			c32_printf("	move	$%s, $t0\n", expr_p1->reg_ans);
+			c32_printf("	move	$%s, $t0\n", buf);
+			strcpy(expr_p1->reg_var, buf);
+			set_save_t_reg(expr_p1->reg_var);
 			expr_p1->mode = MODE0;			// レジスタ属性
 			return;
 		case MODE2:							// 定数属性    value
@@ -965,22 +1087,24 @@ static void factor12(struct expr_param *expr_p1)
 	struct expr_param expr_p2;
 	
 	s_numb_save = c32_s_numb;
-	expr_p2 = *expr_p1;
+//	expr_p2 = *expr_p1;
 	factor13(expr_p1);
 	c32_src_ptr_save(&src_ptr);
 	
 	c32_token_process(0, &type);
 	if(type==TYPE_ASTERISK || type==TYPE_SLUSH || type==TYPE_PERCENT){
-		/***	& だった	***/
-		convert_mode0_2(expr_p1);
+		/***	* / % だった	***/
+		convert_mode0_2(expr_p1, c32_s_numb);
 			
 		s_numb_save = c32_s_numb++;
 		if(c32_max_s_numb < c32_s_numb)
 			c32_max_s_numb = c32_s_numb;
 		for(;;){
-			sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//			sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+			memset(&expr_p2, 0, sizeof(expr_p2));
+			expr_p2.func = expr_p1->func;
 			factor13(&expr_p2);
-			convert_mode0_2(&expr_p2);
+			convert_mode0_2(&expr_p2, c32_s_numb);
 			
 			if(expr_p1->attr & (ATTR_POINTER | ATTR_ARRAY))
 				c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
@@ -992,17 +1116,18 @@ static void factor12(struct expr_param *expr_p1)
 					expr_p1->value *= expr_p2.value;
 				}
 				else{
-					convert_mode0(expr_p1);
-					convert_mode0(&expr_p2);
+					convert_mode0(expr_p1, s_numb_save);
+					convert_mode0(&expr_p2, c32_s_numb);
 					expr_p1->mode = MODE0;
 					if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-						c32_printf("	multu	$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mflo	$%s\n", expr_p1->reg_ans);
+						c32_printf("	multu	$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mflo	$%s\n", expr_p1->reg_var);
 					}
 					else{									// signed
-						c32_printf("	mult	$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mflo	$%s\n", expr_p1->reg_ans);
+						c32_printf("	mult	$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mflo	$%s\n", expr_p1->reg_var);
 					}
+					reset_save_t_reg(expr_p2.reg_var);
 				}
 			}
 			else if(type==TYPE_SLUSH){
@@ -1010,17 +1135,18 @@ static void factor12(struct expr_param *expr_p1)
 					expr_p1->value /= expr_p2.value;
 				}
 				else{
-					convert_mode0(expr_p1);
-					convert_mode0(&expr_p2);
+					convert_mode0(expr_p1, s_numb_save);
+					convert_mode0(&expr_p2, c32_s_numb);
 					expr_p1->mode = MODE0;
 					if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-						c32_printf("	divu	$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mflo	$%s\n", expr_p1->reg_ans);
+						c32_printf("	divu	$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mflo	$%s\n", expr_p1->reg_var);
 					}
 					else{									// signed
-						c32_printf("	div		$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mflo	$%s\n", expr_p1->reg_ans);
+						c32_printf("	div		$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mflo	$%s\n", expr_p1->reg_var);
 					}
+					reset_save_t_reg(expr_p2.reg_var);
 				}
 			}
 			else if(type==TYPE_PERCENT){
@@ -1028,17 +1154,18 @@ static void factor12(struct expr_param *expr_p1)
 					expr_p1->value %= expr_p2.value;
 				}
 				else{
-					convert_mode0(expr_p1);
-					convert_mode0(&expr_p2);
+					convert_mode0(expr_p1, s_numb_save);
+					convert_mode0(&expr_p2, c32_s_numb);
 					expr_p1->mode = MODE0;
 					if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-						c32_printf("	divu	$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mfhi	$%s\n", expr_p1->reg_ans);
+						c32_printf("	divu	$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mfhi	$%s\n", expr_p1->reg_var);
 					}
 					else{									// signed
-						c32_printf("	div		$%s, $t%d\n", expr_p1->reg_ans, c32_s_numb);
-						c32_printf("	mfhi	$%s\n", expr_p1->reg_ans);
+						c32_printf("	div		$%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var);
+						c32_printf("	mfhi	$%s\n", expr_p1->reg_var);
 					}
+					reset_save_t_reg(expr_p2.reg_var);
 				}
 			}
 			else{
@@ -1076,8 +1203,6 @@ static void factor12(struct expr_param *expr_p1)
 /********************************************************************************/
 static void factor11(struct expr_param *expr_p1)
 {
-//	return factor12(func, mode, value);
-
 	int type, s_numb_save, shift;
 	struct src_ptr src_ptr;
 	struct expr_param expr_p2;
@@ -1089,29 +1214,30 @@ static void factor11(struct expr_param *expr_p1)
 	
 	c32_token_process(0, &type);
 	if(type==TYPE_PLUS || type==TYPE_MINUS){
-		/***	& だった	***/
-		convert_mode0_2(expr_p1);
-//		expr_p1->mode = MODE0;
+		/***	+ - だった	***/
+		convert_mode0_2(expr_p1, c32_s_numb);
 			
 		s_numb_save = c32_s_numb++;
 		if(c32_max_s_numb < c32_s_numb)
 			c32_max_s_numb = c32_s_numb;
 		for(;;){
-			sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+			memset(&expr_p2, 0, sizeof(expr_p2));
+			expr_p2.func = expr_p1->func;
 			factor12(&expr_p2);
-			convert_mode0_2(&expr_p2);
+			convert_mode0_2(&expr_p2, c32_s_numb);
 			if(type==TYPE_PLUS){
 				if(expr_p1->attr & (ATTR_POINTER | ATTR_ARRAY)){
-					convert_mode0(expr_p1);
-					convert_mode0(&expr_p2);
+					convert_mode0(expr_p1, s_numb_save);
+					convert_mode0(&expr_p2, c32_s_numb);
 					expr_p1->mode = MODE0;
 					shift = c32_attr_to_shift_bit(expr_p1->attr);
 					if(expr_p2.attr & (ATTR_POINTER | ATTR_ARRAY))
 						c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
 					if(shift){
-						c32_printf("	sll		$t%d, $t%d, %d\n", c32_s_numb, c32_s_numb, shift);
+						c32_printf("	sll		$%s, $%s, %d\n", expr_p2.reg_var, expr_p2.reg_var, shift);
 					}
-					c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+					c32_printf("	addu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+					reset_save_t_reg(expr_p2.reg_var);
 				}
 				else{
 					if(expr_p2.attr & (ATTR_POINTER | ATTR_ARRAY))
@@ -1120,34 +1246,37 @@ static void factor11(struct expr_param *expr_p1)
 						expr_p1->value += expr_p2.value;
 					}
 					else{
-						convert_mode0(expr_p1);
-						convert_mode0(&expr_p2);
+						convert_mode0(expr_p1, s_numb_save);
+						convert_mode0(&expr_p2, c32_s_numb);
 						expr_p1->mode = MODE0;
-						c32_printf("	addu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+						c32_printf("	addu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+						reset_save_t_reg(expr_p2.reg_var);
 					}
 					expr_p1->attr = ((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED) |  ATTR_INT;
 				}
 			}
 			else if(type==TYPE_MINUS){
 				if(expr_p1->attr & (ATTR_POINTER | ATTR_ARRAY)){
-					convert_mode0(expr_p1);
-					convert_mode0(&expr_p2);
+					convert_mode0(expr_p1, s_numb_save);
+					convert_mode0(&expr_p2, c32_s_numb);
 					expr_p1->mode = MODE0;
 					shift = c32_attr_to_shift_bit(expr_p1->attr);
 					if(expr_p2.attr & (ATTR_POINTER | ATTR_ARRAY)){
 						if(expr_p1->attr != expr_p2.attr)
 							c32_error_message(E_SYNTAX_ERROR, __LINE__, __FILE__);
+						c32_printf("	subu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 						if(shift){
-							c32_printf("	srl		$%s, $%s, %d\n", expr_p1->reg_ans, expr_p1->reg_ans, shift);
+							c32_printf("	srl		$%s, $%s, %d\n", expr_p1->reg_var, expr_p1->reg_var, shift);
 						}
-						c32_printf("	subu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
 						expr_p1->attr = ATTR_INT;
+						reset_save_t_reg(expr_p2.reg_var);
 					}
 					else{
 						if(shift){
-							c32_printf("	sll		$t%d, $t%d, %d\n", c32_s_numb, c32_s_numb, shift);
+							c32_printf("	sll		$%s, $%s, %d\n", expr_p2.reg_var, expr_p2.reg_var, shift);
 						}
-						c32_printf("	subu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+						c32_printf("	subu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+						reset_save_t_reg(expr_p2.reg_var);
 					}
 				}
 				else{
@@ -1157,10 +1286,11 @@ static void factor11(struct expr_param *expr_p1)
 						expr_p1->value -= expr_p2.value;
 					}
 					else{
-						convert_mode0(expr_p1);
-						convert_mode0(&expr_p2);
+						convert_mode0(expr_p1, s_numb_save);
+						convert_mode0(&expr_p2, c32_s_numb);
 						expr_p1->mode = MODE0;
-						c32_printf("	subu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+						c32_printf("	subu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+						reset_save_t_reg(expr_p2.reg_var);
 					}
 					expr_p1->attr = ((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED) |  ATTR_INT;
 				}
@@ -1206,35 +1336,38 @@ static void factor10(struct expr_param *expr_p1)
 	struct expr_param expr_p2;
 	
 	s_numb_save = c32_s_numb;
-	expr_p2 = *expr_p1;
+//	expr_p2 = *expr_p1;
 	factor11(expr_p1);
 	c32_src_ptr_save(&src_ptr);
 	
 	c32_token_process(0, &type);				// << >> をテストする
 	if(type==TYPE_L_SHIFT || type==TYPE_R_SHIFT){
-		convert_mode0(expr_p1);
+		convert_mode0(expr_p1, c32_s_numb);
 		expr_p1->mode = MODE0;
 		s_numb_save = c32_s_numb++;
 		if(c32_max_s_numb < c32_s_numb)
 			c32_max_s_numb = c32_s_numb;
 		
-		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor11(&expr_p2);
-		convert_mode0(&expr_p2);
-		expr_p2.mode = MODE0;
+		convert_mode0(&expr_p2, c32_s_numb);
+//		expr_p2.mode = MODE0;
 		if(type==TYPE_L_SHIFT){
-			c32_printf("	sllv	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+			c32_printf("	sllv	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 			c32_s_numb = s_numb_save;
 			return;
 		}
 		else if(type==TYPE_R_SHIFT){
-			c32_printf("	srlv	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+			c32_printf("	srlv	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 			c32_s_numb = s_numb_save;
 			return;
 		}
 		else{
 			c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 		}
+		reset_save_t_reg(expr_p2.reg_var);
 	}
 	c32_src_ptr_restore(&src_ptr);
 }
@@ -1263,28 +1396,31 @@ static void factor9(struct expr_param *expr_p1)
 	struct expr_param expr_p2;
 	
 	s_numb_save = c32_s_numb;
-	expr_p2 = *expr_p1;
+//	expr_p2 = *expr_p1;
 	factor10(expr_p1);
 	c32_src_ptr_save(&src_ptr);
 	
 	c32_token_process(0, &type);
 	if(type==TYPE_LT || type==TYPE_LE || type==TYPE_GT || type==TYPE_GE){
-		convert_mode0(expr_p1);
+		convert_mode0(expr_p1, c32_s_numb);
 		expr_p1->mode = MODE0;
 		s_numb_save = c32_s_numb++;
 		if(c32_max_s_numb < c32_s_numb)
 			c32_max_s_numb = c32_s_numb;
 		
-		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor10(&expr_p2);
-		convert_mode0(&expr_p2);
-		expr_p2.mode = MODE0;
+		convert_mode0(&expr_p2, c32_s_numb);
+		reset_save_t_reg(expr_p2.reg_var);
+//		expr_p2.mode = MODE0;
 		if(type==TYPE_LT){					// < 処理
 			if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-				c32_printf("	sltu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);	// x = x < y ? 1 : 0
+				c32_printf("	sltu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);	// x = x < y ? 1 : 0
 			}
 			else{									// signed
-				c32_printf("	slt		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);	// x = x < y ? 1 : 0
+				c32_printf("	slt		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);	// x = x < y ? 1 : 0
 			}
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
@@ -1292,14 +1428,14 @@ static void factor9(struct expr_param *expr_p1)
 		}
 		else if(type==TYPE_LE){				// <= 処理
 			if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-				c32_printf("	sltu	$%s, $t%d, $%s\n", expr_p1->reg_ans, c32_s_numb, expr_p1->reg_ans);	// x = x <= y ? 0 : 1
+				c32_printf("	sltu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var, expr_p1->reg_var);	// x = x <= y ? 0 : 1
 				c32_printf("	li		$t0, 1\n");
-				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_var, expr_p1->reg_var);
 			}
 			else{									// signed
-				c32_printf("	slt		$%s, $t%d, $%s\n", expr_p1->reg_ans, c32_s_numb, expr_p1->reg_ans);	// x = x <= y ? 0 : 1
+				c32_printf("	slt		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var, expr_p1->reg_var);	// x = x <= y ? 0 : 1
 				c32_printf("	li		$t0, 1\n");
-				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_var, expr_p1->reg_var);
 			}
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
@@ -1307,10 +1443,10 @@ static void factor9(struct expr_param *expr_p1)
 		}
 		else if(type==TYPE_GT){				// > 処理
 			if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-				c32_printf("	sltu	$%s, $t%d, $%s\n", expr_p1->reg_ans, c32_s_numb, expr_p1->reg_ans);	// x = x > y ? 1 : 0
+				c32_printf("	sltu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var, expr_p1->reg_var);	// x = x > y ? 1 : 0
 			}
 			else{									// signed
-				c32_printf("	slt		$%s, $t%d, $%s\n", expr_p1->reg_ans, c32_s_numb, expr_p1->reg_ans);	// x = x > y ? 1 : 0
+				c32_printf("	slt		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p2.reg_var, expr_p1->reg_var);	// x = x > y ? 1 : 0
 			}
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
@@ -1318,14 +1454,14 @@ static void factor9(struct expr_param *expr_p1)
 		}
 		else if(type==TYPE_GE){				// >= 処理
 			if((expr_p1->attr | expr_p2.attr) & ATTR_UNSIGNED){	// unsigned
-				c32_printf("	sltu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);	// x = x >= y ? 0 : 1
+				c32_printf("	sltu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);	// x = x >= y ? 0 : 1
 				c32_printf("	li		$t0, 1\n");
-				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_var, expr_p1->reg_var);
 			}
 			else{									// signed
-				c32_printf("	slt		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);	// x = x >= y ? 0 : 1
+				c32_printf("	slt		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);	// x = x >= y ? 0 : 1
 				c32_printf("	li		$t0, 1\n");
-				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_ans, expr_p1->reg_ans);
+				c32_printf("	subu	$%s, $t0, $%s\n", expr_p1->reg_var, expr_p1->reg_var);
 			}
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
@@ -1369,30 +1505,33 @@ static void factor8(struct expr_param *expr_p1)
 	
 	c32_token_process(0, &type);				// == != を調べる
 	if(type==TYPE_EQEQ || type==TYPE_NOTEQ){
-		convert_mode0(expr_p1);
+		convert_mode0(expr_p1, c32_s_numb);
 		expr_p1->mode = MODE0;
 		s_numb_save = c32_s_numb++;
 		if(c32_max_s_numb < c32_s_numb)
 			c32_max_s_numb = c32_s_numb;
 		
-		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//		sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor9(&expr_p2);
-		convert_mode0(&expr_p2);
+		convert_mode0(&expr_p2, c32_s_numb);
+		reset_save_t_reg(expr_p2.reg_var);
 		expr_p2.mode = MODE0;
 		if(type==TYPE_EQEQ){				// == 処理
-			c32_printf("	subu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-			c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_ans, end_numb);
-			c32_printf("	li		$%s, -1\n", expr_p1->reg_ans);
+			c32_printf("	subu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+			c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_var, end_numb);
+			c32_printf("	li		$%s, -1\n", expr_p1->reg_var);
 			c32_printf("L%d\n", end_numb);
-			c32_printf("	addiu	$%s, $%s, 1\n", expr_p1->reg_ans, expr_p1->reg_ans);
+			c32_printf("	addiu	$%s, $%s, 1\n", expr_p1->reg_var, expr_p1->reg_var);
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
 			return;
 		}
 		else{								// != 処理
-			c32_printf("	subu	$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
-			c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_ans, end_numb);
-			c32_printf("	li		$%s, 1\n", expr_p1->reg_ans);
+			c32_printf("	subu	$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
+			c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_var, end_numb);
+			c32_printf("	li		$%s, 1\n", expr_p1->reg_var);
 			c32_printf("L%d\n", end_numb);
 			c32_s_numb = s_numb_save;
 			expr_p1->attr = ATTR_INT;
@@ -1435,35 +1574,37 @@ static void factor7(struct expr_param *expr_p1)
 		return;
 	}
 	/***	& だった	***/
-	convert_mode0_2(expr_p1);
-	expr_p2 = *expr_p1;
+	convert_mode0_2(expr_p1, c32_s_numb);
+//	expr_p2 = *expr_p1;
 	s_numb_save = c32_s_numb++;
 	if(c32_max_s_numb < c32_s_numb)
 		c32_max_s_numb = c32_s_numb;
-	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
 	for(;;){
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor8(&expr_p2);
-		convert_mode0_2(&expr_p2);
+		convert_mode0_2(&expr_p2, c32_s_numb);
 		
 		if(expr_p1->mode==MODE2 && expr_p2.mode==MODE2){
 			expr_p1->value &= expr_p2.value;
 		}
 		else if(expr_p1->mode==MODE0 && expr_p2.mode==MODE2){
 			if((expr_p2.value & 0xffff0000)==0){
-				c32_printf("	andi	$%s, $%s, 0x%x\n", expr_p1->reg_ans, expr_p1->reg_ans, expr_p2.value);
+				c32_printf("	andi	$%s, $%s, 0x%x\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.value);
 			}
 			else{
-				convert_mode0(&expr_p2);
-				c32_printf("	and		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+				convert_mode0(&expr_p2, c32_s_numb);
+				c32_printf("	and		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 			}
 		}
 		else{
-			convert_mode0(expr_p1);
-			convert_mode0(&expr_p2);
+			convert_mode0(expr_p1, s_numb_save);
+			convert_mode0(&expr_p2, c32_s_numb);
 			expr_p1->mode = MODE0;
-			c32_printf("	and		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+			c32_printf("	and		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 		}
-		
+		reset_save_t_reg(expr_p2.reg_var);
 		c32_src_ptr_save(&src_ptr);
 		c32_token_process(0, &type);			// & を調べる
 		if(type==TYPE_AND)
@@ -1509,35 +1650,37 @@ static void factor6(struct expr_param *expr_p1)
 		return;
 	}
 	/***	^ だった	***/
-	convert_mode0_2(expr_p1);
-	expr_p2 = *expr_p1;
+	convert_mode0_2(expr_p1, c32_s_numb);
+//	expr_p2 = *expr_p1;
 	s_numb_save = c32_s_numb++;
 	if(c32_max_s_numb < c32_s_numb)
 		c32_max_s_numb = c32_s_numb;
-	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
 	for(;;){
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor7(&expr_p2);
-		convert_mode0_2(&expr_p2);
+		convert_mode0_2(&expr_p2, c32_s_numb);
 		
 		if(expr_p1->mode==MODE2 && expr_p2.mode==MODE2){
 			expr_p1->value ^= expr_p2.value;
 		}
 		else if(expr_p1->mode==MODE0 && expr_p2.mode==MODE2){
 			if((expr_p2.value & 0xffff0000)==0){
-				c32_printf("	xori	$%s, $%s, 0x%x\n", expr_p1->reg_ans, expr_p1->reg_ans, expr_p2.value);
+				c32_printf("	xori	$%s, $%s, 0x%x\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.value);
 			}
 			else{
-				convert_mode0(&expr_p2);
-				c32_printf("	xor		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+				convert_mode0(&expr_p2, c32_s_numb);
+				c32_printf("	xor		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 			}
 		}
 		else{
-			convert_mode0(expr_p1);
-			convert_mode0(&expr_p2);
+			convert_mode0(expr_p1, s_numb_save);
+			convert_mode0(&expr_p2, c32_s_numb);
 			expr_p1->mode = MODE0;
-			c32_printf("	xor		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+			c32_printf("	xor		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 		}
-		
+		reset_save_t_reg(expr_p2.reg_var);
 		c32_src_ptr_save(&src_ptr);
 		c32_token_process(0, &type);			// ^ を調べる
 		if(type==TYPE_XOR)
@@ -1583,34 +1726,37 @@ static void factor5(struct expr_param *expr_p1)
 		return;
 	}
 	/***	| だった	***/
-	convert_mode0_2(expr_p1);
+	convert_mode0_2(expr_p1, c32_s_numb);
 	expr_p2 = *expr_p1;
 	s_numb_save = c32_s_numb++;
 	if(c32_max_s_numb < c32_s_numb)
 		c32_max_s_numb = c32_s_numb;
-	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
 	for(;;){
+		memset(&expr_p2, 0, sizeof(expr_p2));
+		expr_p2.func = expr_p1->func;
 		factor6(&expr_p2);
-		convert_mode0_2(&expr_p2);
+		convert_mode0_2(&expr_p2, c32_s_numb);
 
 		if(expr_p1->mode==MODE2 && expr_p2.mode==MODE2){
 			expr_p1->value |= expr_p2.value;
 		}
 		else if(expr_p1->mode==MODE0 && expr_p2.mode==MODE2){
 			if((expr_p2.value & 0xffff0000)==0){
-				c32_printf("	ori		$%s, $%s, 0x%x\n", expr_p1->reg_ans, expr_p1->reg_ans, expr_p2.value);
+				c32_printf("	ori		$%s, $%s, 0x%x\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.value);
 			}
 			else{
-				convert_mode0(&expr_p2);
-				c32_printf("	or		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+				convert_mode0(&expr_p2, c32_s_numb);
+				c32_printf("	or		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 			}
 		}
 		else{
-			convert_mode0(expr_p1);
-			convert_mode0(&expr_p2);
+			convert_mode0(expr_p1, s_numb_save);
+			convert_mode0(&expr_p2, c32_s_numb);
 			expr_p1->mode = MODE0;
-			c32_printf("	or		$%s, $%s, $t%d\n", expr_p1->reg_ans, expr_p1->reg_ans, c32_s_numb);
+			c32_printf("	or		$%s, $%s, $%s\n", expr_p1->reg_var, expr_p1->reg_var, expr_p2.reg_var);
 		}
+		reset_save_t_reg(expr_p2.reg_var);
 		
 		c32_src_ptr_save(&src_ptr);
 		c32_token_process(0, &type);			// | を調べる
@@ -1646,6 +1792,7 @@ static void factor4(struct expr_param *expr_p1)
 	int type;
 	struct src_ptr src_ptr;
 	int end_numb = c32_label_counter++;
+	struct symtbl *func = expr_p1->func;
 	
 	factor5(expr_p1);
 	c32_src_ptr_save(&src_ptr);
@@ -1656,11 +1803,13 @@ static void factor4(struct expr_param *expr_p1)
 		return;
 	}
 	/***	&& だった	***/
-	convert_mode0(expr_p1);
-	c32_printf("	beqz	$t%d, L%d\n", c32_s_numb, end_numb);
+	convert_mode0(expr_p1, c32_s_numb);
+	c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_var, end_numb);
+	memset(expr_p1, 0, sizeof(struct expr_param));
+	expr_p1->func = func;
 	factor4(expr_p1);
 	
-	convert_mode0(expr_p1);
+	convert_mode0(expr_p1, c32_s_numb);
 	c32_printf("L%d\n", end_numb);
 	expr_p1->mode = MODE0;					// 計算式属性
 }
@@ -1687,6 +1836,7 @@ static void factor3(struct expr_param *expr_p1)
 	int type;
 	struct src_ptr src_ptr;
 	int end_numb = c32_label_counter++;
+	struct symtbl *func = expr_p1->func;
 	
 	factor4(expr_p1);
 	c32_src_ptr_save(&src_ptr);
@@ -1697,11 +1847,13 @@ static void factor3(struct expr_param *expr_p1)
 		return;
 	}
 	/***	|| だった	***/
-	convert_mode0(expr_p1);
-	c32_printf("	bnez	$t%d, L%d\n", c32_s_numb, end_numb);
+	convert_mode0(expr_p1, c32_s_numb);
+	c32_printf("	bnez	$%s, L%d\n", expr_p1->reg_var, end_numb);
+	memset(expr_p1, 0, sizeof(struct expr_param));
+	expr_p1->func = func;
 	factor3(expr_p1);
 	
-	convert_mode0(expr_p1);
+	convert_mode0(expr_p1, c32_s_numb);
 	c32_printf("L%d\n", end_numb);
 	expr_p1->mode = MODE0;					// 計算式属性
 }
@@ -1710,28 +1862,33 @@ static void factor3(struct expr_param *expr_p1)
 /*		計算式属性/定数属性  にする												*/
 /*		c32_s_numb は expr_p1 で計算した時の c32_s_numb を指定しなければならない		*/
 /********************************************************************************/
-void convert_mode0_2(struct expr_param *expr_p1)
+void convert_mode0_2(struct expr_param *expr_p1, int s_numb)
 {
+	char buf[4];
+	
+	sprintf(buf, "t%d", s_numb);
 	switch(expr_p1->mode){
 	case MODE0:							// 計算式属性    c32_s_numb
 		break;
 	case MODE1:							// 計算式アドレス属性  c32_s_numb
 		if(expr_p1->attr & ATTR_ARRAY){
-			c32_printf("	addiu	$%s, $%s, %s\n", expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+			c32_printf("	addiu	$%s, $%s, %s\n", buf, expr_p1->reg_var, expr_p1->off);
 		}
 		else{
-			reg_eq_mem(expr_p1->attr, expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+			reg_eq_mem(expr_p1->attr, buf, expr_p1->reg_var, expr_p1->off);
 		}
+		strcpy(expr_p1->reg_var, buf);
 		break;
 	case MODE2:							// 定数属性    value
 		return;
 	case MODE6:							// ラベル
-		c32_printf("	la		$%s, L%d\n", expr_p1->reg_ans, expr_p1->value);
+		c32_printf("	la		$%s, L%d\n", buf, expr_p1->value);
+		strcpy(expr_p1->reg_var, buf);
 		break;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 	}
-	
+	set_save_t_reg(expr_p1->reg_var);
 	expr_p1->mode = MODE0;				// 計算式属性    c32_s_numb
 }
 /********************************************************************************/
@@ -1739,28 +1896,35 @@ void convert_mode0_2(struct expr_param *expr_p1)
 /*		計算式属性にする														*/
 /*		c32_s_numb は expr_p1 で計算した時の c32_s_numb を指定しなければならない		*/
 /********************************************************************************/
-void convert_mode0(struct expr_param *expr_p1)
+void convert_mode0(struct expr_param *expr_p1, int s_numb)
 {
+	char buf[4];
+	
+	sprintf(buf, "t%d", s_numb);
 	switch(expr_p1->mode){
 	case MODE0:							// 計算式属性    c32_s_numb
 		break;
 	case MODE1:							// 計算式アドレス属性  c32_s_numb
 		if(expr_p1->attr & ATTR_ARRAY){
-			c32_printf("	addiu	$%s, $%s, %s\n", expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+			c32_printf("	addiu	$%s, $%s, %s\n", buf, expr_p1->reg_var, expr_p1->off);
 		}
 		else{
-			reg_eq_mem(expr_p1->attr, expr_p1->reg_ans, expr_p1->reg_var, expr_p1->off);
+			reg_eq_mem(expr_p1->attr, buf, expr_p1->reg_var, expr_p1->off);
 		}
+		strcpy(expr_p1->reg_var, buf);
 		break;
 	case MODE2:							// 定数属性    value
-		c32_printf("	la		$%s, %d\n", expr_p1->reg_ans, expr_p1->value);
+		c32_printf("	la		$%s, %d\n", buf, expr_p1->value);
+		strcpy(expr_p1->reg_var, buf);
 		break;
 	case MODE6:							// ラベル
-		c32_printf("	la		$%s, L%d\n", expr_p1->reg_ans, expr_p1->value);
+		c32_printf("	la		$%s, L%d\n", buf, expr_p1->value);
+		strcpy(expr_p1->reg_var, buf);
 		break;
 	default:
 		c32_error_message(E_INTERNAL_ERROR, __LINE__, __FILE__);
 	}
+	set_save_t_reg(expr_p1->reg_var);
 	expr_p1->mode = MODE0;
 }
 /********************************************************************************/
@@ -1814,11 +1978,11 @@ static void factor2(struct expr_param *expr_p1)
 		return;
 	}
 	/***	? :  処理	***/
-	convert_mode0(expr_p1);			// 計算式属性にする → $s*
-	c32_printf("	beqz	$t%d, L%d\n", c32_s_numb, false_numb);
+	convert_mode0(expr_p1, c32_s_numb);			// 計算式属性にする → $s*
+	c32_printf("	beqz	$%s, L%d\n", expr_p1->reg_var, false_numb);
 	
 	factor3(expr_p1);						// true 計算式
-	convert_mode0(expr_p1);
+	convert_mode0(expr_p1, c32_s_numb);
 	c32_printf("	j		L%d\n", end_numb);
 	
 	c32_token_process(0, &type);				// ':' テスト
@@ -1827,14 +1991,14 @@ static void factor2(struct expr_param *expr_p1)
 	
 	c32_printf("L%d\n", false_numb);
 	factor3(expr_p1);						// false 計算式
-	convert_mode0(expr_p1);
+	convert_mode0(expr_p1, c32_s_numb);
 	
 	c32_printf("L%d\n", end_numb);
-	expr_p1->mode = MODE0;					// 計算式属性にする
-	if(c32_attr_to_byte(expr_p1->attr)==4){
-		return;
-	}
-	expr_p1->attr = ATTR_INT;
+//	expr_p1->mode = MODE0;					// 計算式属性にする
+//	if(c32_attr_to_byte(expr_p1->attr)==4){
+//		return;
+//	}
+//	expr_p1->attr = ATTR_INT;
 }
 /********************************************************************************/
 /*		c32_factor1																*/
@@ -1894,10 +2058,10 @@ void c32_factor1(struct expr_param *expr_p1)
 		c32_max_s_numb = c32_s_numb;
 	
 	/***	第二項取り込み		***/
-	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+//	sprintf(expr_p2.reg_ans, "t%d", c32_s_numb);
+	memset(&expr_p2, 0, sizeof(expr_p2));
+	expr_p2.func = expr_p1->func;
 	c32_factor1(&expr_p2);
-//	convert_mode0(&expr_p2);
-//	expr_p2.mode = MODE0;
 	
 	/***	演算実行	***/
 	switch(type){
@@ -1937,7 +2101,7 @@ void c32_factor1(struct expr_param *expr_p1)
 	default:
 		c32_error_message(E_TO_BE_DEFINE, __LINE__, __FILE__);
 	}
-	
+	reset_save_t_reg(expr_p2.reg_var);
 	c32_s_numb = s_numb_save;
 }
 /********************************************************************************/
@@ -1960,13 +2124,17 @@ void c32_expr(struct expr_param *expr_p1)
 {
 	int type;
 	struct src_ptr src_ptr;
-	
-	c32_printf(";---------- c32_expr \"%s\" ----------\n", expr_p1->reg_ans);
+	struct symtbl *func = expr_p1->func;
+
+	c32_printf(";---------- c32_expr ----------\n");
 	for(;;){
+		memset(expr_p1, 0, sizeof(struct expr_param));
+		expr_p1->func = func;
 		c32_factor1(expr_p1);
 		c32_src_ptr_save(&src_ptr);
 		c32_token_process(0, &type);				// ',' テスト
 		if(type==TYPE_KANMA){				// ',' だった
+			reset_save_t_reg(expr_p1->reg_var);
 			continue;
 		}
 		c32_src_ptr_restore(&src_ptr);

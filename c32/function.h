@@ -5,8 +5,8 @@ void reg_eq_constant_address(int attr, const char *reg, int constant);
 void reg_eq_mem(int attr, const char *dst_reg, const char *src_reg, char *offset);
 
 //		c32_expr.cpp
-void convert_mode0(struct expr_param *expr_p1);
-void convert_mode0_2(struct expr_param *expr_p1);
+void convert_mode0(struct expr_param *expr_p1, int s_numb);
+void convert_mode0_2(struct expr_param *expr_p1, int s_numb);
 void convert_mode1(struct expr_param *expr_p1);
 void c32_expr(struct expr_param *expr_p1);
 //static void factor(struct expr_param *expr_p1);
